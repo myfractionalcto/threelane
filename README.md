@@ -26,8 +26,8 @@
 
 Threelane is a Mac app for making **product demos, tutorials, and tech reels**.
 It captures your screen, webcam, and phone-as-camera simultaneously over the
-same WiFi network, then edits into portrait, landscape, or square video with
-per-scene layouts and exports straight to MP4.
+same WiFi network, then edits the recording into portrait, landscape, or
+square video with per-scene layouts and exports straight to MP4.
 
 Your phone becomes an optional second camera — the over-the-shoulder shot,
 the physical-object close-up, or the reaction cam — paired with a QR code
