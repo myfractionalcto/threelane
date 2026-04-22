@@ -30,10 +30,10 @@ same WiFi network, then edits the recording into portrait, landscape, or
 square video with per-scene layouts and exports straight to MP4.
 
 Your phone becomes an optional second camera — the over-the-shoulder shot,
-the physical-object close-up, or the reaction cam — paired with a QR code
-over the same WiFi. No cloud upload, no account, nothing ever leaves your
-laptop. The mobile companion is an installable PWA, so no App Store install
-on the phone either.
+the physical-object close-up, or the reaction cam — paired by scanning a QR
+code, then connected over the same WiFi network. No cloud upload, no
+account, nothing ever leaves your laptop. The mobile companion is an
+installable PWA, so no App Store install on the phone either.
 
 Built for indie hackers recording launch videos, devtool founders shipping
 demos, dev-rel engineers making tutorials, and anyone who's tired of screen
