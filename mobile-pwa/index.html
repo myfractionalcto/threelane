@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="theme-color" content="#0a0a0b" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Threelane" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <title>Threelane Mobile</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="logo">
+          <div class="logo-mark"></div>
+          <div>
+            <div class="logo-title">Threelane</div>
+            <div class="logo-sub">Companion camera</div>
+          </div>
+        </div>
+        <div id="status" class="status">
+          <span class="dot"></span>
+          <span class="status-text">Connecting…</span>
+        </div>
+      </header>
+
+      <section class="preview-wrap">
+        <video id="preview" autoplay playsinline muted></video>
+        <div id="rec-pill" class="rec-pill hidden">
+          <span class="rec-dot"></span>REC&nbsp;<span id="rec-timer">00:00</span>
+        </div>
+      </section>
+
+      <section class="controls">
+        <div id="msg" class="msg">Tap below to grant camera and mic access.</div>
+        <button id="grant" class="primary-btn">Grant camera &amp; mic</button>
+        <div id="hint" class="hint hidden">
+          The laptop will trigger recording. Keep this tab open.
+        </div>
+        <div id="upload-row" class="upload-row hidden">
+          <div class="progress">
+            <div id="progress-bar"></div>
+          </div>
+          <div id="upload-label" class="upload-label">Uploading…</div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Connection panel — visible until the WebSocket is open.
+         Shows what URL we're trying, how many attempts, and lets the
+         user stop/retry/re-target the laptop. -->
+    <section id="reconnect" class="reconnect" aria-hidden="false">
+      <div class="reconnect-card">
+        <div class="reconnect-title" id="reconnect-title">Connecting…</div>
+        <div class="reconnect-url" id="reconnect-url-label">—</div>
+        <div class="reconnect-sub" id="reconnect-sub">
+          Trying to reach the laptop. Make sure Threelane is open on the same WiFi.
+        </div>
+
+        <div class="reconnect-actions">
+          <button id="reconnect-retry" class="primary-btn">Retry now</button>
+          <button id="reconnect-stop" class="secondary-btn">Stop retrying</button>
+          <button id="reconnect-saved" class="secondary-btn hidden">Use last URL</button>
+          <button id="reconnect-scan" class="secondary-btn">Scan QR</button>
+        </div>
+
+        <details class="reconnect-manual">
+          <summary>Or paste a URL</summary>
+          <form id="reconnect-form">
+            <input
+              id="reconnect-url"
+              type="url"
+              inputmode="url"
+              autocomplete="off"
+              autocapitalize="off"
+              placeholder="https://10.0.0.5:47878"
+            />
+            <button type="submit" class="secondary-btn">Go</button>
+          </form>
+        </details>
+
+        <div id="scan-wrap" class="scan-wrap hidden">
+          <video id="scan-video" playsinline muted></video>
+          <div class="scan-overlay"></div>
+          <button id="scan-cancel" class="secondary-btn">Cancel</button>
+        </div>
+      </div>
+    </section>
+    <!-- jsQR is loaded eagerly so it's cached alongside the shell and
+         available the first time the Reconnect scanner needs it. -->
+    <script src="/vendor/jsqr.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

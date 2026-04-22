@@ -1,0 +1,41 @@
+appId: com.threelane.app
+productName: Threelane
+directories:
+  output: release
+files:
+  - dist/**
+  - dist-electron/**
+  - mobile-pwa/**
+  - package.json
+# Keep ffmpeg outside the asar archive so the binary can be spawned.
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+  - mobile-pwa/**
+# Icon is picked up automatically from build/icon.png (electron-builder
+# convention). Keep a 1024x1024 PNG there; .icns is generated if absent.
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  category: public.app-category.video
+  # Ad-hoc signed (no Apple Developer account yet). Users still need to
+  # right-click → Open on first launch, but ad-hoc signing gives the bundle
+  # a stable identity so macOS TCC can remember camera/mic consent across
+  # restarts and reinstalls.
+  identity: '-'
+  gatekeeperAssess: false
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSCameraUsageDescription: Threelane needs camera access to record your webcam.
+    NSMicrophoneUsageDescription: Threelane needs microphone access to record audio.
+    NSScreenCaptureUsageDescription: Threelane needs screen recording permission to capture your screen.
+    # Opt in to the modern Continuity Camera API so iPhone-as-webcam shows up
+    # and the deprecated AVCaptureDeviceTypeExternal warning goes away.
+    NSCameraUseContinuityCameraDeviceType: true
+dmg:
+  title: Threelane ${version}
+  writeUpdateInfo: false
