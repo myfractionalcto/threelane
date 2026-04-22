@@ -34,6 +34,25 @@ store install on the phone either.
 
 More on the [website](https://threeline.myfractionalcto.com).
 
+## Screenshots
+
+### Studio — recording
+
+Live previews for every input (screen, webcam, phone-as-camera) with a
+live mic meter. Scan the QR code from the phone to add it as an extra
+camera — same WiFi, no App Store install.
+
+![Threelane studio — recording view with screen, camera, and iPhone previews plus a QR code to pair a phone](docs/screenshots/studio.png)
+
+### Editor — after the recording
+
+Multi-track timeline with per-input clips (screen, laptop-cam, laptop-mic,
+mobile-cam). Pick a canvas (portrait / landscape / square), a scene
+layout (screen, camera, phone, split, or screen + bubble), tweak the
+bubble corner and zoom, then export straight to MP4.
+
+![Threelane editor — timeline with scene layout picker, canvas aspect ratios, and bubble corner controls](docs/screenshots/editor.png)
+
 ## Features
 
 ### Recording
