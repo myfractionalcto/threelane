@@ -367,11 +367,15 @@ export function EditorView({ projectId, onExit }: Props) {
         project={editor.project}
         playheadMs={playback.playheadMs}
         playing={playback.playing}
+        volume={playback.volume}
+        muted={playback.muted}
         selectedSceneId={editor.selectedSceneId}
         selectedZoomClipId={editor.selectedZoomClipId}
         selectedTrimClipId={editor.selectedTrimClipId}
         onSeek={playback.seek}
         onTogglePlay={playback.toggle}
+        onSetVolume={playback.setVolume}
+        onToggleMute={playback.toggleMute}
         onSelectScene={editor.setSelectedSceneId}
         onSelectZoomClip={editor.selectZoomClip}
         onClearZoomClipSelection={editor.clearZoomClipSelection}
