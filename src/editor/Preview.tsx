@@ -38,12 +38,15 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
   const wrapRef = useRef<HTMLDivElement>(null);
   const playheadRef = useRef(playheadMs);
   playheadRef.current = playheadMs;
-  // Smoothed cursor-follow offset carried across frames. Reset on zoom-clip
-  // change so entering a new clip doesn't smear the previous clip's pan.
-  const followRef = useRef<{ x: number; y: number; clipId: string | null }>({
+  // Smoothed cursor-follow offset carried across frames. The `key`
+  // identifies what's currently driving the follow — a zoom clip
+  // (`clip:<id>`), the scene baseline (`scene:<id>`), or nothing (null).
+  // When the key flips between sources we snap to the fresh target rather
+  // than tweening — prevents a visible jump/drift at the transition.
+  const followRef = useRef<{ x: number; y: number; key: string | null }>({
     x: 0,
     y: 0,
-    clipId: null,
+    key: null,
   });
 
   useImperativeHandle(outerRef, () => ({
@@ -91,10 +94,13 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
         const clip = activeZoomClip(s.zoomClips, playheadRef.current);
 
         // Compute cursor-in-source once if any consumer (zoom clip follow
-        // OR project-level big cursor overlay) will need it.
+        // OR scene-level follow OR project-level big cursor overlay) will
+        // need it.
         let cursorInSrc: { x: number; y: number } | null = null;
         const wantsCursor =
-          (project.showCursorOverlay || (clip && clip.followCursor)) &&
+          (project.showCursorOverlay ||
+            (clip && clip.followCursor) ||
+            (!clip && s.followCursor)) &&
           project.cursorTrack &&
           scrEl &&
           scrEl.videoWidth > 0;
@@ -117,33 +123,42 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
           }
         }
 
-        if (clip && scrEl && scrEl.videoWidth > 0) {
-          // Base transform: scene framing (fit), with the clip's zoom
-          // applied. Offsets come from the clip but are overridden below
-          // if follow-cursor is on.
-          const clipBase: typeof s.screenTransform = {
-            ...s.screenTransform,
-            zoom: clip.zoom,
-            offsetX: clip.offsetX,
-            offsetY: clip.offsetY,
-          };
-          if (clip.followCursor && cursorInSrc) {
+        // Decide the "base" transform and whether to run cursor-follow.
+        // Three cases:
+        //   1) Active zoom clip — clip zoom/offset, clip.followCursor flag.
+        //   2) No clip, scene.followCursor on — scene screenTransform, follow.
+        //   3) No clip, no scene follow — scene screenTransform, no follow.
+        if (scrEl && scrEl.videoWidth > 0) {
+          const base: typeof s.screenTransform = clip
+            ? {
+                ...s.screenTransform,
+                zoom: clip.zoom,
+                offsetX: clip.offsetX,
+                offsetY: clip.offsetY,
+              }
+            : s.screenTransform;
+          const wantsFollow =
+            cursorInSrc !== null &&
+            (clip ? clip.followCursor : s.followCursor);
+          const followKey = clip ? `clip:${clip.id}` : `scene:${s.id}`;
+
+          if (wantsFollow && cursorInSrc) {
             const target = followOffset(
               cursorInSrc,
               { width: scrEl.videoWidth, height: scrEl.videoHeight },
               { width: project.canvas.width, height: project.canvas.height },
-              clipBase,
+              base,
             );
-            // At the clip's in-point, snap to the target instead of
-            // tweening from (0,0) — otherwise the first ~250ms of the
-            // clip shows the scene's centered framing drifting into the
-            // follow pose, which reads as "the view stuck at the top of
-            // the screen for a moment." Snap first, smooth after.
-            if (followRef.current.clipId !== clip.id) {
+            // At a follow transition (scene → clip, clip → scene, new
+            // clip) snap instead of tweening from wherever we left off.
+            // Otherwise the first ~250ms shows the old offset drifting
+            // into the new pose, which reads as "stuck at the top of the
+            // screen for a moment." Snap first, smooth after.
+            if (followRef.current.key !== followKey) {
               followRef.current = {
                 x: target.offsetX,
                 y: target.offsetY,
-                clipId: clip.id,
+                key: followKey,
               };
             }
             const smoothed = smoothOffset(
@@ -154,20 +169,22 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
             followRef.current.x = smoothed.x;
             followRef.current.y = smoothed.y;
             screenTransform = {
-              ...clipBase,
+              ...base,
               offsetX: smoothed.x,
               offsetY: smoothed.y,
             };
           } else {
-            followRef.current.clipId = clip.id;
-            followRef.current.x = clip.offsetX;
-            followRef.current.y = clip.offsetY;
-            screenTransform = clipBase;
+            // Not following — use the base as-is. Seed the smoothing
+            // buffer with the current offset so the next follow
+            // transition has a sensible starting point (even though
+            // we'll snap on the first follow frame regardless).
+            followRef.current = {
+              x: base.offsetX,
+              y: base.offsetY,
+              key: clip ? `clip:${clip.id}:still` : `scene:${s.id}:still`,
+            };
+            screenTransform = base;
           }
-        } else {
-          // No active clip — revert to scene framing and drop smoothing
-          // state so the next clip entry starts clean.
-          followRef.current.clipId = null;
         }
 
         composite(

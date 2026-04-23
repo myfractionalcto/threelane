@@ -1,10 +1,10 @@
 import type { TrackKind } from '@/platform';
 import { cn } from '@/lib/utils';
 import {
+  ArrowLeft,
   Camera,
   Image as ImageIcon,
   Monitor,
-  Plus,
   RotateCcw,
   Smartphone,
   SplitSquareHorizontal,
@@ -26,8 +26,9 @@ import type {
 interface Props {
   project: EditorProject;
   scene: Scene | null;
-  /** Output-time ms. Used to seed "add zoom clip at playhead". */
-  playheadMs: number;
+  /** When non-null, the Inspector renders the clip-edit panel instead of
+   *  the scene-level framing/audio settings. */
+  selectedZoomClip: ZoomClip | null;
   onLayoutChange: (l: Layout) => void;
   onAudioSourceChange: (t: TrackKind | null) => void;
   onBubbleChange: (c: BubbleCorner) => void;
@@ -36,9 +37,10 @@ interface Props {
   onTransformChange: (role: SourceRole, patch: Partial<SourceTransform>) => void;
   onTransformReset: (role: SourceRole) => void;
   onShowCursorOverlayChange: (show: boolean) => void;
-  onAddZoomClip: (start: number, end: number) => void;
+  onSceneFollowCursorChange: (follow: boolean) => void;
   onUpdateZoomClip: (clipId: string, patch: Partial<ZoomClip>) => void;
   onRemoveZoomClip: (clipId: string) => void;
+  onClearZoomClipSelection: () => void;
 }
 
 /**
@@ -47,7 +49,7 @@ interface Props {
 export function Inspector({
   project,
   scene,
-  playheadMs,
+  selectedZoomClip,
   onLayoutChange,
   onAudioSourceChange,
   onBubbleChange,
@@ -56,9 +58,10 @@ export function Inspector({
   onTransformChange,
   onTransformReset,
   onShowCursorOverlayChange,
-  onAddZoomClip,
+  onSceneFollowCursorChange,
   onUpdateZoomClip,
   onRemoveZoomClip,
+  onClearZoomClipSelection,
 }: Props) {
   const hasScreen = project.tracks.some((t) => t.kind === 'screen');
   const hasCam = project.tracks.some((t) => t.kind === 'laptop-cam');
@@ -138,7 +141,15 @@ export function Inspector({
         </label>
       </Section>
 
-      {scene ? (
+      {selectedZoomClip ? (
+        <SelectedZoomClipPanel
+          clip={selectedZoomClip}
+          hasCursorTrack={!!project.cursorTrack}
+          onBack={onClearZoomClipSelection}
+          onUpdate={(patch) => onUpdateZoomClip(selectedZoomClip.id, patch)}
+          onRemove={() => onRemoveZoomClip(selectedZoomClip.id)}
+        />
+      ) : scene ? (
         <>
           <Section title="Scene layout">
             <div className="grid grid-cols-2 gap-2">
@@ -232,19 +243,13 @@ export function Inspector({
               disabled={role === 'screen' ? !hasScreen : !hasCam}
               onChange={(patch) => onTransformChange(role, patch)}
               onReset={() => onTransformReset(role)}
+              followCursor={role === 'screen' ? scene.followCursor : undefined}
+              hasCursorTrack={role === 'screen' ? !!project.cursorTrack : undefined}
+              onFollowCursorChange={
+                role === 'screen' ? onSceneFollowCursorChange : undefined
+              }
             />
           ))}
-
-          {visibleRoles(scene.layout).includes('screen') && hasScreen && (
-            <ZoomClipsSection
-              scene={scene}
-              playheadMs={playheadMs}
-              hasCursorTrack={!!project.cursorTrack}
-              onAdd={onAddZoomClip}
-              onUpdate={onUpdateZoomClip}
-              onRemove={onRemoveZoomClip}
-            />
-          )}
 
           <Section title="Audio source">
             <div className="space-y-1.5">
@@ -382,12 +387,20 @@ function TransformSection({
   disabled,
   onChange,
   onReset,
+  followCursor,
+  hasCursorTrack,
+  onFollowCursorChange,
 }: {
   role: SourceRole;
   transform: SourceTransform;
   disabled?: boolean;
   onChange: (patch: Partial<SourceTransform>) => void;
   onReset: () => void;
+  /** Scene-wide cursor-follow toggle — only shown for the screen role.
+   *  undefined = hide the checkbox entirely. */
+  followCursor?: boolean;
+  hasCursorTrack?: boolean;
+  onFollowCursorChange?: (follow: boolean) => void;
 }) {
   const label = role === 'screen' ? 'Screen framing' : 'Camera framing';
   if (disabled) return null;
@@ -444,6 +457,37 @@ function TransformSection({
           format={(v) => `${(v * 100).toFixed(0)}%`}
           onChange={(v) => onChange({ offsetY: v })}
         />
+        {followCursor !== undefined && onFollowCursorChange && (
+          <label
+            className={cn(
+              'flex items-start gap-2 px-3 py-2 rounded-md border cursor-pointer text-xs',
+              followCursor
+                ? 'border-foreground/70 bg-foreground/10'
+                : 'border-border hover:border-foreground/40',
+              !hasCursorTrack && 'cursor-not-allowed opacity-60',
+            )}
+            title={
+              hasCursorTrack
+                ? 'Pan with the recorded cursor while this scene is playing (outside any zoom clip). Useful when the framing crops the screen.'
+                : 'No cursor track — re-record in the desktop app to enable.'
+            }
+          >
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={followCursor}
+              disabled={!hasCursorTrack}
+              onChange={(e) => onFollowCursorChange(e.target.checked)}
+            />
+            <span>
+              <div className="font-medium text-foreground">Follow cursor</div>
+              <div className="text-muted-foreground">
+                Keeps the cursor in frame when the scene is zoomed or
+                cropped. New zoom clips inherit this setting.
+              </div>
+            </span>
+          </label>
+        )}
         <p className="text-[11px] text-muted-foreground">
           {role === 'screen'
             ? 'Static framing for the whole scene. Zoom-in moments go on the timeline as Zoom clips.'
@@ -455,72 +499,48 @@ function TransformSection({
 }
 
 /**
- * Zoom-clip manager for the active scene. Lists clips in time order,
- * lets the user add one at the current playhead, edit in place, or
- * remove. Full timeline UI (drag / resize clips) lives on the timeline
- * itself in a later phase — this is the v0.2.0 data-model surface.
+ * Full clip editor shown when the user has a zoom clip selected on the
+ * timeline. Zoom level + follow-cursor toggle + "Back to scene" so the
+ * user can get back to scene-level editing without clicking timeline
+ * background.
  */
-function ZoomClipsSection({
-  scene,
-  playheadMs,
+function SelectedZoomClipPanel({
+  clip,
   hasCursorTrack,
-  onAdd,
+  onBack,
   onUpdate,
   onRemove,
 }: {
-  scene: Scene;
-  playheadMs: number;
+  clip: ZoomClip;
   hasCursorTrack: boolean;
-  onAdd: (start: number, end: number) => void;
-  onUpdate: (clipId: string, patch: Partial<ZoomClip>) => void;
-  onRemove: (clipId: string) => void;
+  onBack: () => void;
+  onUpdate: (patch: Partial<ZoomClip>) => void;
+  onRemove: () => void;
 }) {
-  const clips = [...scene.zoomClips].sort((a, b) => a.start - b.start);
-  const handleAdd = () => {
-    // Default clip: 2s centered on the playhead, clamped to the scene.
-    const defaultDurMs = 2000;
-    const seed = Math.max(
-      scene.start,
-      Math.min(scene.end - 500, playheadMs - defaultDurMs / 2),
-    );
-    onAdd(seed, Math.min(scene.end, seed + defaultDurMs));
-  };
   return (
-    <div>
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground">
-          <ZoomIn className="size-3.5" />
-          Zoom clips
-        </div>
-        <button
-          type="button"
-          onClick={handleAdd}
-          title="Add a zoom clip at the playhead"
-          className="flex items-center gap-1 text-xs text-foreground/80 hover:text-foreground border border-border hover:border-foreground/40 rounded px-2 py-1"
-        >
-          <Plus className="size-3.5" />
-          Add
-        </button>
+    <div className="space-y-3">
+      <button
+        type="button"
+        onClick={onBack}
+        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="size-3.5" />
+        Back to scene
+      </button>
+      <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground">
+        <ZoomIn className="size-3.5" />
+        Zoom clip
       </div>
-      {clips.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground">
-          No zoom clips yet. Click <em>Add</em> to drop one at the playhead —
-          the view will zoom in for the clip's time range and return to the
-          scene framing after.
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {clips.map((c) => (
-            <ZoomClipRow
-              key={c.id}
-              clip={c}
-              hasCursorTrack={hasCursorTrack}
-              onUpdate={(patch) => onUpdate(c.id, patch)}
-              onRemove={() => onRemove(c.id)}
-            />
-          ))}
-        </div>
-      )}
+      <ZoomClipRow
+        clip={clip}
+        hasCursorTrack={hasCursorTrack}
+        onUpdate={onUpdate}
+        onRemove={onRemove}
+      />
+      <p className="text-[11px] text-muted-foreground">
+        Drag the clip on the timeline to move it, or drag its edges to change
+        duration. <kbd className="font-mono">Delete</kbd> to remove.
+      </p>
     </div>
   );
 }

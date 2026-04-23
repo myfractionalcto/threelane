@@ -6,6 +6,7 @@ import {
   DEFAULT_TRANSFORM,
   DEFAULT_ZOOM_CLIP_ZOOM,
   genSceneId,
+  genTrimClipId,
   genZoomClipId,
   type BubbleCorner,
   type CanvasSize,
@@ -16,6 +17,7 @@ import {
   type SecondarySource,
   type SourceRole,
   type SourceTransform,
+  type TrimClip,
   type ZoomClip,
 } from './types';
 
@@ -27,11 +29,63 @@ import {
 export function useEditorState(initial: EditorProject | null) {
   const [project, setProject] = useState<EditorProject | null>(initial);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
+  // When a zoom clip is selected, the Inspector flips to clip-editor mode.
+  // Implies the clip's scene is also selected (the clip lives in it) so we
+  // update both in `selectZoomClip` below.
+  const [selectedZoomClipId, setSelectedZoomClipId] = useState<string | null>(null);
+  // Trim-clip selection is tracked for keyboard delete + highlight on the
+  // Trim lane. It's mutually exclusive with zoom-clip selection — selecting
+  // one drops the other so the keyboard handler always has a single target.
+  const [selectedTrimClipId, setSelectedTrimClipId] = useState<string | null>(null);
 
   const selectedScene = useMemo(
     () => project?.scenes.find((s) => s.id === selectedSceneId) ?? null,
     [project, selectedSceneId],
   );
+
+  const selectedZoomClip = useMemo(() => {
+    if (!selectedZoomClipId || !selectedScene) return null;
+    return selectedScene.zoomClips.find((c) => c.id === selectedZoomClipId) ?? null;
+  }, [selectedScene, selectedZoomClipId]);
+
+  const selectedTrimClip = useMemo(() => {
+    if (!selectedTrimClipId || !selectedScene) return null;
+    return selectedScene.trimClips.find((c) => c.id === selectedTrimClipId) ?? null;
+  }, [selectedScene, selectedTrimClipId]);
+
+  /** Select a zoom clip. Also selects its parent scene (the clip lives
+   *  in it) and drops any trim-clip selection so the keyboard delete
+   *  handler has one unambiguous target. */
+  const selectZoomClip = useCallback((sceneId: string, clipId: string) => {
+    setSelectedSceneId(sceneId);
+    setSelectedZoomClipId(clipId);
+    setSelectedTrimClipId(null);
+  }, []);
+
+  /** Clear zoom-clip selection. Leaves trim-clip and scene selection
+   *  alone — they're independent. */
+  const clearZoomClipSelection = useCallback(() => {
+    setSelectedZoomClipId(null);
+  }, []);
+
+  /** Mirror of selectZoomClip for the Trim lane. */
+  const selectTrimClip = useCallback((sceneId: string, clipId: string) => {
+    setSelectedSceneId(sceneId);
+    setSelectedTrimClipId(clipId);
+    setSelectedZoomClipId(null);
+  }, []);
+
+  const clearTrimClipSelection = useCallback(() => {
+    setSelectedTrimClipId(null);
+  }, []);
+
+  /** Wrap setSelectedSceneId so picking a different scene drops any clip
+   *  selection automatically — stale clip ids would point nowhere. */
+  const setSelectedScene = useCallback((id: string | null) => {
+    setSelectedSceneId(id);
+    setSelectedZoomClipId(null);
+    setSelectedTrimClipId(null);
+  }, []);
 
   const setCanvas = useCallback((orientation: Orientation) => {
     setProject((p) => (p ? { ...p, canvas: CANVAS_PRESETS[orientation] } : p));
@@ -150,6 +204,11 @@ export function useEditorState(initial: EditorProject | null) {
       const original = p.scenes[idx];
       const leftClips = original.zoomClips.filter((c) => c.end <= atMs);
       const rightClips = original.zoomClips.filter((c) => c.start >= atMs);
+      // Same partition rule for trim clips: a trim straddling the split
+      // would be hard to interpret (halve it? bias one way?) — drop it
+      // and make the user redraw. Matches zoomClips semantics.
+      const leftTrims = original.trimClips.filter((c) => c.end <= atMs);
+      const rightTrims = original.trimClips.filter((c) => c.start >= atMs);
       const right: Scene = {
         ...original,
         id: genSceneId(),
@@ -157,6 +216,7 @@ export function useEditorState(initial: EditorProject | null) {
         screenTransform: { ...original.screenTransform },
         camTransform: { ...original.camTransform },
         zoomClips: rightClips.map((c) => ({ ...c })),
+        trimClips: rightTrims.map((c) => ({ ...c })),
       };
       const left: Scene = {
         ...original,
@@ -164,12 +224,15 @@ export function useEditorState(initial: EditorProject | null) {
         screenTransform: { ...original.screenTransform },
         camTransform: { ...original.camTransform },
         zoomClips: leftClips.map((c) => ({ ...c })),
+        trimClips: leftTrims.map((c) => ({ ...c })),
       };
       const next = [...p.scenes];
       next.splice(idx, 1, left, right);
       return { ...p, scenes: next };
     });
     setSelectedSceneId(null);
+    setSelectedZoomClipId(null);
+    setSelectedTrimClipId(null);
   }, []);
 
   /**
@@ -193,6 +256,8 @@ export function useEditorState(initial: EditorProject | null) {
       return { ...p, scenes: next };
     });
     setSelectedSceneId(null);
+    setSelectedZoomClipId(null);
+    setSelectedTrimClipId(null);
   }, []);
 
   /**
@@ -203,6 +268,27 @@ export function useEditorState(initial: EditorProject | null) {
   const setShowCursorOverlay = useCallback((show: boolean) => {
     setProject((p) => (p ? { ...p, showCursorOverlay: show } : p));
   }, []);
+
+  /**
+   * Toggle scene-wide cursor-follow. Zoom clips each keep their own
+   * followCursor bit — this only affects the scene baseline (i.e. the
+   * playhead is inside the scene but not inside any zoom clip).
+   */
+  const setSceneFollowCursor = useCallback(
+    (sceneId: string, followCursor: boolean) => {
+      setProject((p) =>
+        p
+          ? {
+              ...p,
+              scenes: p.scenes.map((s) =>
+                s.id === sceneId ? { ...s, followCursor } : s,
+              ),
+            }
+          : p,
+      );
+    },
+    [],
+  );
 
   /**
    * Append a zoom clip to a scene. Caller supplies the time range — the
@@ -228,7 +314,12 @@ export function useEditorState(initial: EditorProject | null) {
               start: cs,
               end: ce,
               zoom: DEFAULT_ZOOM_CLIP_ZOOM,
-              followCursor: !!p.cursorTrack,
+              // Inherit the scene's cursor-follow intent. If the user has
+              // the scene-level toggle on, a dropped clip keeps the same
+              // behavior; if they've explicitly turned it off for the
+              // scene, the clip starts off too. (Still gated on the
+              // project actually having a cursor track, of course.)
+              followCursor: !!p.cursorTrack && s.followCursor,
               offsetX: 0,
               offsetY: 0,
             };
@@ -239,6 +330,10 @@ export function useEditorState(initial: EditorProject | null) {
           }),
         };
       });
+      // Select the newly-added clip so the Inspector immediately flips into
+      // clip-edit mode — saves the user a second click after "Add".
+      setSelectedSceneId(sceneId);
+      setSelectedZoomClipId(id);
       return id;
     },
     [],
@@ -278,6 +373,91 @@ export function useEditorState(initial: EditorProject | null) {
           ),
         };
       });
+      // Drop selection if we just removed the selected clip.
+      setSelectedZoomClipId((cur) => (cur === clipId ? null : cur));
+    },
+    [],
+  );
+
+  /**
+   * Add a trim clip. Same invariants as addZoomClip: the range is clamped
+   * to the scene, and any existing trim clip this one would overlap is
+   * merged into the new one (two overlapping trims collapse into a single
+   * contiguous cut — simpler than prompting the user).
+   */
+  const addTrimClip = useCallback(
+    (sceneId: string, start: number, end: number): string => {
+      const id = genTrimClipId();
+      setProject((p) => {
+        if (!p) return p;
+        return {
+          ...p,
+          scenes: p.scenes.map((s) => {
+            if (s.id !== sceneId) return s;
+            const cs = Math.max(s.start, Math.min(s.end, start));
+            const ce = Math.max(cs + 1, Math.min(s.end, end));
+            // Merge overlapping existing trims into the new clip's range
+            // rather than displacing them — trims are range-unions, they
+            // don't have individual "identity" the way zooms do.
+            let mergedStart = cs;
+            let mergedEnd = ce;
+            const kept = s.trimClips.filter((c) => {
+              const overlaps = c.end > mergedStart && c.start < mergedEnd;
+              if (overlaps) {
+                mergedStart = Math.min(mergedStart, c.start);
+                mergedEnd = Math.max(mergedEnd, c.end);
+                return false;
+              }
+              return true;
+            });
+            const clip: TrimClip = { id, start: mergedStart, end: mergedEnd };
+            return { ...s, trimClips: [...kept, clip] };
+          }),
+        };
+      });
+      setSelectedSceneId(sceneId);
+      setSelectedTrimClipId(id);
+      setSelectedZoomClipId(null);
+      return id;
+    },
+    [],
+  );
+
+  const updateTrimClip = useCallback(
+    (sceneId: string, clipId: string, patch: Partial<TrimClip>) => {
+      setProject((p) => {
+        if (!p) return p;
+        return {
+          ...p,
+          scenes: p.scenes.map((s) => {
+            if (s.id !== sceneId) return s;
+            return {
+              ...s,
+              trimClips: s.trimClips.map((c) =>
+                c.id === clipId ? { ...c, ...patch } : c,
+              ),
+            };
+          }),
+        };
+      });
+    },
+    [],
+  );
+
+  const removeTrimClip = useCallback(
+    (sceneId: string, clipId: string) => {
+      setProject((p) => {
+        if (!p) return p;
+        return {
+          ...p,
+          scenes: p.scenes.map((s) =>
+            s.id === sceneId
+              ? { ...s, trimClips: s.trimClips.filter((c) => c.id !== clipId) }
+              : s,
+          ),
+        };
+      });
+      setSelectedTrimClipId((cur) => (cur === clipId ? null : cur));
     },
     [],
   );
@@ -287,7 +467,15 @@ export function useEditorState(initial: EditorProject | null) {
     setProject,
     selectedScene,
     selectedSceneId,
-    setSelectedSceneId,
+    setSelectedSceneId: setSelectedScene,
+    selectedZoomClip,
+    selectedZoomClipId,
+    selectZoomClip,
+    clearZoomClipSelection,
+    selectedTrimClip,
+    selectedTrimClipId,
+    selectTrimClip,
+    clearTrimClipSelection,
     setCanvas,
     setSceneLayout,
     setSceneAudioSource,
@@ -298,9 +486,13 @@ export function useEditorState(initial: EditorProject | null) {
     splitAt,
     deleteScene,
     setShowCursorOverlay,
+    setSceneFollowCursor,
     addZoomClip,
     updateZoomClip,
     removeZoomClip,
+    addTrimClip,
+    updateTrimClip,
+    removeTrimClip,
   };
 }
 

@@ -100,6 +100,24 @@ export function genZoomClipId(): string {
   return `zoom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
+/**
+ * A "cut" range on the timeline. Output-time ms, same clock as scenes
+ * and zoom clips. During playback the preview skips over [start, end];
+ * the exporter omits the range from the final MP4 so the output
+ * duration shrinks by sum(trim durations). Trim clips live on a scene
+ * so splitting / deleting a scene keeps them sensible — a clip fully
+ * inside a scene travels with that scene.
+ */
+export interface TrimClip {
+  id: string;
+  start: number;
+  end: number;
+}
+
+export function genTrimClipId(): string {
+  return `trim-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
 /** Which source "slot" a transform applies to inside a scene. */
 export type SourceRole = 'screen' | 'cam';
 
@@ -141,10 +159,19 @@ export interface Scene {
    *  at render time but kept around so toggling layouts preserves framing. */
   screenTransform: SourceTransform;
   camTransform: SourceTransform;
+  /** Track the recorded cursor with the screen's pan offset for the whole
+   *  scene. Most useful when `screenTransform` is cropping the source
+   *  (fit=cover, or zoom > 1) — the user doesn't want to chase the cursor
+   *  out of frame. No effect without a cursor track. Newly-added zoom
+   *  clips inherit this value as their own `followCursor` on creation. */
+  followCursor: boolean;
   /** Zoom effect clips living on this scene's time range. Each defines a
    *  time window during which the screen track is zoomed/panned
    *  differently from the scene baseline. Empty = no effects. */
   zoomClips: ZoomClip[];
+  /** Cut ranges living on this scene's time range. Preview skips over
+   *  them; exporter omits them from the output. Empty = full scene plays. */
+  trimClips: TrimClip[];
 }
 
 export interface EditorProject {
