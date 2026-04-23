@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pause, Play, Plus, Scissors, ScissorsSquare, Trash2, ZoomIn } from 'lucide-react';
+import {
+  Pause,
+  Play,
+  Plus,
+  Scissors,
+  ScissorsSquare,
+  Trash2,
+  Volume1,
+  Volume2,
+  VolumeX,
+  ZoomIn,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { EditorProject, Scene, TrimClip, ZoomClip } from './types';
 import { useClipDrag } from './useClipDrag';
@@ -22,11 +33,16 @@ interface Props {
   project: EditorProject;
   playheadMs: number;
   playing: boolean;
+  /** Monitor volume 0..1 — preview only, doesn't affect export. */
+  volume: number;
+  muted: boolean;
   selectedSceneId: string | null;
   selectedZoomClipId: string | null;
   selectedTrimClipId: string | null;
   onSeek: (ms: number) => void;
   onTogglePlay: () => void;
+  onSetVolume: (v: number) => void;
+  onToggleMute: () => void;
   onSelectScene: (id: string) => void;
   onSelectZoomClip: (sceneId: string, clipId: string) => void;
   onClearZoomClipSelection: () => void;
@@ -44,11 +60,15 @@ export function Timeline({
   project,
   playheadMs,
   playing,
+  volume,
+  muted,
   selectedSceneId,
   selectedZoomClipId,
   selectedTrimClipId,
   onSeek,
   onTogglePlay,
+  onSetVolume,
+  onToggleMute,
   onSelectScene,
   onSelectZoomClip,
   onClearZoomClipSelection,
@@ -149,6 +169,15 @@ export function Timeline({
         <div className="font-mono text-sm tabular-nums">
           {fmt(playheadMs)} / {fmt(totalMs)}
         </div>
+        {/* Monitor volume — preview only, does not affect export. Sits
+            between the time readout and the right-side actions so it's
+            visible but out of the way of the destructive buttons. */}
+        <VolumeControl
+          volume={volume}
+          muted={muted}
+          onSetVolume={onSetVolume}
+          onToggleMute={onToggleMute}
+        />
         <div className="ml-auto flex items-center gap-2">
           <button
             type="button"
@@ -747,6 +776,54 @@ function TrimClipCard({
         style={{ right: 0, cursor: 'ew-resize' }}
         onMouseDown={onRightMouseDown}
         onClick={(e) => e.stopPropagation()}
+      />
+    </div>
+  );
+}
+
+/**
+ * Monitor volume slider + mute button. Stateless — parent owns the
+ * values and persists them. The mute button icon tracks the effective
+ * level so a glance at it tells you whether anything's audible:
+ * VolumeX when muted or at 0, Volume1 at low, Volume2 above half.
+ */
+function VolumeControl({
+  volume,
+  muted,
+  onSetVolume,
+  onToggleMute,
+}: {
+  volume: number;
+  muted: boolean;
+  onSetVolume: (v: number) => void;
+  onToggleMute: () => void;
+}) {
+  const effective = muted ? 0 : volume;
+  const Icon = effective <= 0 ? VolumeX : effective < 0.5 ? Volume1 : Volume2;
+  const pct = Math.round(effective * 100);
+  return (
+    <div className="flex items-center gap-1.5 ml-1 pl-2 border-l border-border/60">
+      <button
+        type="button"
+        onClick={onToggleMute}
+        title={muted ? 'Unmute preview' : 'Mute preview'}
+        className={cn(
+          'size-7 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors',
+          muted && 'text-foreground/80',
+        )}
+      >
+        <Icon className="size-4" />
+      </button>
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.01}
+        value={muted ? 0 : volume}
+        onChange={(e) => onSetVolume(Number(e.target.value))}
+        className="w-24 accent-primary cursor-pointer"
+        title={`Preview volume: ${pct}%`}
+        aria-label="Preview volume"
       />
     </div>
   );

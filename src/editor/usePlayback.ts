@@ -10,14 +10,48 @@ import type { EditorProject } from './types';
  */
 export type MediaMap = Partial<Record<TrackKind, HTMLMediaElement>>;
 
+// Monitor volume persists across editor sessions — nothing is more
+// annoying than re-setting it every time you reopen a project. Scope
+// is the whole app (not per-project) since it's really about *your
+// speakers* right now, not the content.
+const VOLUME_STORAGE_KEY = 'threelane:previewVolume';
+const MUTED_STORAGE_KEY = 'threelane:previewMuted';
+
+function readStoredVolume(): number {
+  try {
+    const raw = localStorage.getItem(VOLUME_STORAGE_KEY);
+    if (raw == null) return 1;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return 1;
+    return Math.min(1, Math.max(0, n));
+  } catch {
+    return 1;
+  }
+}
+
+function readStoredMuted(): boolean {
+  try {
+    return localStorage.getItem(MUTED_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export function usePlayback(project: EditorProject | null) {
   const [playing, setPlaying] = useState(false);
   const [playheadMs, setPlayheadMs] = useState(0);
+  const [volume, setVolumeState] = useState<number>(() => readStoredVolume());
+  const [muted, setMutedState] = useState<boolean>(() => readStoredMuted());
   const playingRef = useRef(false);
   const playheadRef = useRef(0);
   const lastTickRef = useRef(0);
   const rafRef = useRef<number | null>(null);
   const mediaRef = useRef<MediaMap>({});
+  // Mirrored in refs so registerMedia can read current values on attach
+  // without having to be re-created (and thus re-attach) every time the
+  // slider moves.
+  const volumeRef = useRef(volume);
+  const mutedRef = useRef(muted);
 
   const totalMs = project?.totalDurationMs ?? 0;
 
@@ -56,11 +90,62 @@ export function usePlayback(project: EditorProject | null) {
 
   const registerMedia = useCallback(
     (kind: TrackKind, el: HTMLMediaElement | null) => {
-      if (el) mediaRef.current[kind] = el;
-      else delete mediaRef.current[kind];
+      if (el) {
+        mediaRef.current[kind] = el;
+        // Apply the current monitor volume/mute state to this freshly
+        // attached element — otherwise a new scene's track pool would
+        // play at full volume on its first frame until the slider is
+        // touched. We read refs (not state) so this callback can stay
+        // stable.
+        try {
+          el.volume = volumeRef.current;
+          el.muted = mutedRef.current;
+        } catch {
+          // Safari iOS refuses programmatic volume changes; ignore.
+        }
+      } else {
+        delete mediaRef.current[kind];
+      }
     },
     [],
   );
+
+  /**
+   * Apply monitor volume + mute to every registered media element. Fires
+   * on every change to either, and persists the new values so the editor
+   * reopens at the same level next session.
+   */
+  useEffect(() => {
+    volumeRef.current = volume;
+    mutedRef.current = muted;
+    for (const el of Object.values(mediaRef.current)) {
+      if (!el) continue;
+      try {
+        el.volume = volume;
+        el.muted = muted;
+      } catch {
+        // Safari iOS — no-op.
+      }
+    }
+    try {
+      localStorage.setItem(VOLUME_STORAGE_KEY, String(volume));
+      localStorage.setItem(MUTED_STORAGE_KEY, muted ? '1' : '0');
+    } catch {
+      // Private-mode or quota — ignore.
+    }
+  }, [volume, muted]);
+
+  const setVolume = useCallback((v: number) => {
+    const clamped = Math.min(1, Math.max(0, v));
+    setVolumeState(clamped);
+    // Dragging the slider up from 0 is the obvious "un-mute" gesture —
+    // honour it so the user doesn't have to also click the icon.
+    if (clamped > 0) setMutedState(false);
+  }, []);
+
+  const toggleMute = useCallback(() => {
+    setMutedState((m) => !m);
+  }, []);
 
   /** Compute a track's offset in output-time. */
   const trackOffset = useCallback(
@@ -206,10 +291,14 @@ export function usePlayback(project: EditorProject | null) {
     playing,
     playheadMs,
     totalMs,
+    volume,
+    muted,
     play,
     pause,
     toggle,
     seek,
+    setVolume,
+    toggleMute,
     registerMedia,
     trackOffset,
     mediaRef,
